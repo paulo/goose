@@ -16,7 +16,8 @@ type fileSources struct {
 }
 
 // collectFilesystemSources scans the file system for migration files that have a numeric prefix
-// (greater than one) followed by an underscore and a file extension of either .go or .sql. fsys may
+// (greater than zero, or zero when allowZeroVersion is true) followed by an underscore and a file
+// extension of either .go or .sql. fsys may
 // be nil, in which case an empty fileSources is returned.
 //
 // If strict is true, then any error parsing the numeric component of the filename will result in an
@@ -29,6 +30,7 @@ func collectFilesystemSources(
 	strict bool,
 	excludePaths map[string]bool,
 	excludeVersions map[int64]bool,
+	allowZeroVersion bool,
 ) (*fileSources, error) {
 	if fsys == nil {
 		return new(fileSources), nil
@@ -61,6 +63,12 @@ func collectFilesystemSources(
 			if err != nil {
 				if strict {
 					return nil, fmt.Errorf("failed to parse numeric component from %q: %w", base, err)
+				}
+				continue
+			}
+			if version == 0 && !allowZeroVersion {
+				if strict {
+					return nil, fmt.Errorf("version 0 is not allowed, use WithAllowZeroVersion to enable: %s", base)
 				}
 				continue
 			}

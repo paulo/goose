@@ -373,8 +373,8 @@ func NumericComponent(filename string) (int64, error) {
 	if err != nil {
 		return 0, fmt.Errorf("failed to parse version from migration file: %s: %w", base, err)
 	}
-	if n < 1 {
-		return 0, errors.New("migration version must be greater than zero")
+	if n < 0 {
+		return 0, errors.New("migration version must be a non-negative number")
 	}
 	return n, nil
 }

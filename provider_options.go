@@ -134,7 +134,7 @@ func WithExcludeNames(excludes []string) ProviderOption {
 func WithExcludeVersions(versions []int64) ProviderOption {
 	return configFunc(func(c *config) error {
 		for _, version := range versions {
-			if version < 1 {
+			if version < 0 {
 				return errInvalidVersion
 			}
 			if _, ok := c.excludeVersions[version]; ok {
@@ -184,6 +184,19 @@ func WithDisableGlobalRegistry(b bool) ProviderOption {
 func WithAllowOutofOrder(b bool) ProviderOption {
 	return configFunc(func(c *config) error {
 		c.allowMissing = b
+		return nil
+	})
+}
+
+// WithAllowZeroVersion allows the provider to use version 0 for migrations. By default, goose
+// treats version 0 as a sentinel value in the version table. When this option is enabled, the
+// sentinel is moved to version -1, freeing version 0 for real migrations.
+//
+// This is useful for tools like Drizzle ORM that generate zero-prefixed migrations such as
+// 0000_sticky_sunset_bain.sql.
+func WithAllowZeroVersion(b bool) ProviderOption {
+	return configFunc(func(c *config) error {
+		c.allowZeroVersion = b
 		return nil
 	})
 }
@@ -266,6 +279,7 @@ type config struct {
 	allowMissing          bool
 	disableGlobalRegistry bool
 	isolateDDL            bool
+	allowZeroVersion      bool
 
 	// Only a single logger can be set, they are mutually exclusive. If neither is set, a default
 	// [Logger] will be set to maintain backward compatibility in /v3.

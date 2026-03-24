@@ -119,7 +119,7 @@ func newProvider(
 	// feat(mf): we could add a flag to parse SQL migrations eagerly. This would allow us to return
 	// an error if there are any SQL parsing errors. This adds a bit overhead to startup though, so
 	// we should make it optional.
-	filesystemSources, err := collectFilesystemSources(fsys, false, cfg.excludePaths, cfg.excludeVersions)
+	filesystemSources, err := collectFilesystemSources(fsys, false, cfg.excludePaths, cfg.excludeVersions, cfg.allowZeroVersion)
 	if err != nil {
 		return nil, err
 	}
@@ -349,7 +349,7 @@ func (p *Provider) up(
 	byOne bool,
 	version int64,
 ) (_ []*MigrationResult, retErr error) {
-	if version < 1 {
+	if version < 1 && (version != 0 || !p.cfg.allowZeroVersion) {
 		return nil, errInvalidVersion
 	}
 	conn, cleanup, err := p.initialize(ctx, true)
@@ -442,12 +442,12 @@ func (p *Provider) down(
 	if len(dbMigrations) == 0 {
 		return nil, errMissingZeroVersion
 	}
-	// We never migrate the zero version down.
-	if dbMigrations[0].Version == 0 {
+	// We never migrate the sentinel version down.
+	if p.isSentinelVersion(dbMigrations[0].Version) {
 		p.logf(ctx,
-			"no migrations to run, current version: 0",
+			fmt.Sprintf("no migrations to run, current version: %d", dbMigrations[0].Version),
 			"no migrations to run",
-			slog.Int64("version", 0),
+			slog.Int64("version", dbMigrations[0].Version),
 		)
 		return nil, nil
 	}
@@ -470,7 +470,7 @@ func (p *Provider) apply(
 	version int64,
 	direction bool,
 ) (_ []*MigrationResult, retErr error) {
-	if version < 1 {
+	if version < 1 && (version != 0 || !p.cfg.allowZeroVersion) {
 		return nil, errInvalidVersion
 	}
 	m, err := p.getMigration(version)

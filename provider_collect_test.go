@@ -11,21 +11,21 @@ import (
 func TestCollectFileSources(t *testing.T) {
 	t.Parallel()
 	t.Run("nil_fsys", func(t *testing.T) {
-		sources, err := collectFilesystemSources(nil, false, nil, nil)
+		sources, err := collectFilesystemSources(nil, false, nil, nil, false)
 		require.NoError(t, err)
 		require.NotNil(t, sources)
 		require.Empty(t, sources.goSources)
 		require.Empty(t, sources.sqlSources)
 	})
 	t.Run("noop_fsys", func(t *testing.T) {
-		sources, err := collectFilesystemSources(noopFS{}, false, nil, nil)
+		sources, err := collectFilesystemSources(noopFS{}, false, nil, nil, false)
 		require.NoError(t, err)
 		require.NotNil(t, sources)
 		require.Empty(t, sources.goSources)
 		require.Empty(t, sources.sqlSources)
 	})
 	t.Run("empty_fsys", func(t *testing.T) {
-		sources, err := collectFilesystemSources(fstest.MapFS{}, false, nil, nil)
+		sources, err := collectFilesystemSources(fstest.MapFS{}, false, nil, nil, false)
 		require.NoError(t, err)
 		require.Empty(t, sources.goSources)
 		require.Empty(t, sources.sqlSources)
@@ -35,20 +35,27 @@ func TestCollectFileSources(t *testing.T) {
 		mapFS := fstest.MapFS{
 			"00000_foo.sql": sqlMapFile,
 		}
-		// strict disable - should not error
-		sources, err := collectFilesystemSources(mapFS, false, nil, nil)
+		// allowZeroVersion=false: non-strict skips, strict errors
+		sources, err := collectFilesystemSources(mapFS, false, nil, nil, false)
 		require.NoError(t, err)
 		require.Empty(t, sources.goSources)
 		require.Empty(t, sources.sqlSources)
-		// strict enabled - should error
-		_, err = collectFilesystemSources(mapFS, true, nil, nil)
+		_, err = collectFilesystemSources(mapFS, true, nil, nil, false)
 		require.Error(t, err)
-		require.Contains(t, err.Error(), "migration version must be greater than zero")
+		require.Contains(t, err.Error(), "version 0 is not allowed")
+		// allowZeroVersion=true: version 0 is accepted
+		sources, err = collectFilesystemSources(mapFS, false, nil, nil, true)
+		require.NoError(t, err)
+		require.Len(t, sources.sqlSources, 1)
+		require.Equal(t, int64(0), sources.sqlSources[0].Version)
+		sources, err = collectFilesystemSources(mapFS, true, nil, nil, true)
+		require.NoError(t, err)
+		require.Len(t, sources.sqlSources, 1)
 	})
 	t.Run("collect", func(t *testing.T) {
 		fsys, err := fs.Sub(newSQLOnlyFS(), "migrations")
 		require.NoError(t, err)
-		sources, err := collectFilesystemSources(fsys, false, nil, nil)
+		sources, err := collectFilesystemSources(fsys, false, nil, nil, false)
 		require.NoError(t, err)
 		require.Len(t, sources.sqlSources, 4)
 		require.Empty(t, sources.goSources)
@@ -76,6 +83,7 @@ func TestCollectFileSources(t *testing.T) {
 				"00110_qux.sql": true,
 			},
 			nil,
+			false,
 		)
 		require.NoError(t, err)
 		require.Len(t, sources.sqlSources, 2)
@@ -96,7 +104,7 @@ func TestCollectFileSources(t *testing.T) {
 		mapFS["migrations/not_valid.sql"] = &fstest.MapFile{Data: []byte("invalid")}
 		fsys, err := fs.Sub(mapFS, "migrations")
 		require.NoError(t, err)
-		_, err = collectFilesystemSources(fsys, true, nil, nil)
+		_, err = collectFilesystemSources(fsys, true, nil, nil, false)
 		require.Error(t, err)
 		require.Contains(t, err.Error(), `failed to parse numeric component from "not_valid.sql"`)
 	})
@@ -108,7 +116,7 @@ func TestCollectFileSources(t *testing.T) {
 			"4_qux.sql":     sqlMapFile,
 			"5_foo_test.go": {Data: []byte(`package goose_test`)},
 		}
-		sources, err := collectFilesystemSources(mapFS, false, nil, nil)
+		sources, err := collectFilesystemSources(mapFS, false, nil, nil, false)
 		require.NoError(t, err)
 		require.Len(t, sources.sqlSources, 4)
 		require.Empty(t, sources.goSources)
@@ -123,7 +131,7 @@ func TestCollectFileSources(t *testing.T) {
 			"no_a_real_migration.sql":  {Data: []byte(`SELECT 1;`)},
 			"some/other/dir/2_foo.sql": {Data: []byte(`SELECT 1;`)},
 		}
-		sources, err := collectFilesystemSources(mapFS, false, nil, nil)
+		sources, err := collectFilesystemSources(mapFS, false, nil, nil, false)
 		require.NoError(t, err)
 		require.Len(t, sources.sqlSources, 2)
 		require.Len(t, sources.goSources, 1)
@@ -142,7 +150,7 @@ func TestCollectFileSources(t *testing.T) {
 			"001_foo.sql": sqlMapFile,
 			"01_bar.sql":  sqlMapFile,
 		}
-		_, err := collectFilesystemSources(mapFS, false, nil, nil)
+		_, err := collectFilesystemSources(mapFS, false, nil, nil, false)
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "found duplicate migration version 1")
 	})
@@ -158,7 +166,7 @@ func TestCollectFileSources(t *testing.T) {
 			t.Helper()
 			f, err := fs.Sub(mapFS, dirpath)
 			require.NoError(t, err)
-			got, err := collectFilesystemSources(f, false, nil, nil)
+			got, err := collectFilesystemSources(f, false, nil, nil, false)
 			require.NoError(t, err)
 			require.Len(t, sqlSources, len(got.sqlSources))
 			require.Empty(t, got.goSources)
@@ -194,7 +202,7 @@ func TestMerge(t *testing.T) {
 		}
 		fsys, err := fs.Sub(mapFS, "migrations")
 		require.NoError(t, err)
-		sources, err := collectFilesystemSources(fsys, false, nil, nil)
+		sources, err := collectFilesystemSources(fsys, false, nil, nil, false)
 		require.NoError(t, err)
 		require.Len(t, sources.sqlSources, 1)
 		require.Len(t, sources.goSources, 2)
@@ -242,7 +250,7 @@ func TestMerge(t *testing.T) {
 		}
 		fsys, err := fs.Sub(mapFS, "migrations")
 		require.NoError(t, err)
-		sources, err := collectFilesystemSources(fsys, false, nil, nil)
+		sources, err := collectFilesystemSources(fsys, false, nil, nil, false)
 		require.NoError(t, err)
 		t.Run("unregistered_all", func(t *testing.T) {
 			migrations, err := merge(sources, map[int64]*Migration{
@@ -266,7 +274,7 @@ func TestMerge(t *testing.T) {
 		}
 		fsys, err := fs.Sub(mapFS, "migrations")
 		require.NoError(t, err)
-		sources, err := collectFilesystemSources(fsys, false, nil, nil)
+		sources, err := collectFilesystemSources(fsys, false, nil, nil, false)
 		require.NoError(t, err)
 		t.Run("unregistered_all", func(t *testing.T) {
 			migrations, err := merge(sources, map[int64]*Migration{

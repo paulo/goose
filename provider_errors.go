@@ -22,7 +22,7 @@ var (
 	ErrNotApplied = errors.New("migration not applied")
 
 	// errInvalidVersion is returned when a migration version is invalid.
-	errInvalidVersion = errors.New("version must be greater than 0")
+	errInvalidVersion = errors.New("version must be greater than 0 (use WithAllowZeroVersion to allow version 0)")
 )
 
 // PartialError is returned when a migration fails, but some migrations already got applied.
