@@ -362,7 +362,7 @@ func (p *Provider) tryEnsureVersionTable(ctx context.Context, conn *sql.Conn) er
 	return retry.Do(ctx, b, func(ctx context.Context) error {
 		exists, err := p.store.TableExists(ctx, conn)
 		if err == nil && exists {
-			return p.maybeMigrateSentinel(ctx, conn)
+			return nil
 		} else if err != nil && errors.Is(err, errors.ErrUnsupported) {
 			// Fallback strategy for checking table existence:
 			//
@@ -378,10 +378,11 @@ func (p *Provider) tryEnsureVersionTable(ctx context.Context, conn *sql.Conn) er
 			if res, err := p.store.GetMigration(ctx, conn, sentinel); err == nil && res != nil {
 				return nil
 			}
-			// Also check the other sentinel value (0) in case it needs migration.
+			// When allowZeroVersion is enabled, also check for the standard sentinel (v0) to
+			// detect tables created before this option was enabled.
 			if sentinel == -1 {
 				if res, err := p.store.GetMigration(ctx, conn, 0); err == nil && res != nil {
-					return p.maybeMigrateSentinel(ctx, conn)
+					return nil
 				}
 			}
 			// Fallthrough to create the table.
@@ -416,43 +417,6 @@ func (p *Provider) tryEnsureVersionTable(ctx context.Context, conn *sql.Conn) er
 
 		return nil
 	})
-}
-
-// maybeMigrateSentinel migrates the sentinel row from version 0 to -1 when allowZeroVersion is
-// enabled. This frees version 0 for real migrations on existing databases.
-func (p *Provider) maybeMigrateSentinel(ctx context.Context, conn *sql.Conn) error {
-	if !p.cfg.allowZeroVersion {
-		return nil
-	}
-	// Check if the old sentinel (version 0) exists and needs to be migrated to -1.
-	res, err := p.store.GetMigration(ctx, conn, 0)
-	if err != nil {
-		if errors.Is(err, database.ErrVersionNotFound) {
-			return nil
-		}
-		return fmt.Errorf("check sentinel version: %w", err)
-	}
-	if res == nil {
-		return nil
-	}
-	// Check if sentinel -1 already exists (already migrated).
-	existing, err := p.store.GetMigration(ctx, conn, -1)
-	if err != nil && !errors.Is(err, database.ErrVersionNotFound) {
-		return fmt.Errorf("check sentinel version -1: %w", err)
-	}
-	if existing != nil {
-		return nil
-	}
-	// Migrate sentinel from 0 to -1 atomically.
-	if err := beginTx(ctx, conn, func(tx *sql.Tx) error {
-		if err := p.store.Delete(ctx, tx, 0); err != nil {
-			return fmt.Errorf("delete old sentinel version 0: %w", err)
-		}
-		return p.store.Insert(ctx, tx, database.InsertRequest{Version: -1})
-	}); err != nil {
-		return fmt.Errorf("migrate sentinel version: %w", err)
-	}
-	return nil
 }
 
 // sentinelVersion returns the version used as the sentinel row in the version table. Normally 0,
